@@ -163,6 +163,14 @@ function ExpenseForm({ members, onSave }) {
     setBusy(true);
     setError("");
     try {
+      if (splitType === "custom") {
+        const expected = Number(amount);
+        if (!Number.isFinite(expected) || Math.round(customSum * 100) !== Math.round(expected * 100)) {
+          throw new Error(
+            `Custom splits must add up to ${Number(amount || 0).toFixed(2)}; got ${customSum.toFixed(2)}`,
+          );
+        }
+      }
       await onSave({
         description,
         amount: Number(amount),

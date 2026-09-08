@@ -7,5 +7,5 @@ export function formatMoney(cents) {
 export function signedBalance(cents) {
   if (cents === 0) return { label: "settled up", className: "is-even" };
   if (cents > 0) return { label: `is owed ${formatMoney(cents)}`, className: "is-credit" };
-  return { label: `owes ${formatMoney(cents)}`, className: "is-debt" };
+  return { label: `owes ${formatMoney(Math.abs(cents))}`, className: "is-debt" };
 }
