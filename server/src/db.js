@@ -58,64 +58,129 @@ export function openDb(dbPath = process.env.SPLITFAIR_DB ?? defaultDbPath()) {
   return db;
 }
 
+function all(db, sql, params = []) {
+  return db.prepare(sql).all(...params);
+}
+
+function get(db, sql, params = []) {
+  return db.prepare(sql).get(...params);
+}
+
+function run(db, sql, params = []) {
+  return db.prepare(sql).run(...params);
+}
+
 export function createQueries(db) {
   return {
-    listGroups: db.prepare(`
-      SELECT
-        g.id,
-        g.name,
-        g.created_at AS createdAt,
-        COUNT(DISTINCT m.id) AS memberCount,
-        COUNT(DISTINCT e.id) AS expenseCount
-      FROM groups g
-      LEFT JOIN members m ON m.group_id = g.id
-      LEFT JOIN expenses e ON e.group_id = g.id
-      GROUP BY g.id
-      ORDER BY g.created_at DESC
-    `),
-    getGroup: db.prepare(`SELECT id, name, created_at AS createdAt FROM groups WHERE id = ?`),
-    insertGroup: db.prepare(`INSERT INTO groups (name) VALUES (?)`),
-    insertMember: db.prepare(`INSERT INTO members (group_id, name) VALUES (?, ?)`),
-    listMembers: db.prepare(`
-      SELECT id, group_id AS groupId, name, created_at AS createdAt
-      FROM members
-      WHERE group_id = ?
-      ORDER BY id
-    `),
-    getMember: db.prepare(`SELECT id, group_id AS groupId, name FROM members WHERE id = ?`),
-    listExpenses: db.prepare(`
-      SELECT
-        e.id,
-        e.group_id AS groupId,
-        e.description,
-        e.amount_cents AS amountCents,
-        e.paid_by_id AS paidById,
-        m.name AS paidByName,
-        e.split_type AS splitType,
-        e.created_at AS createdAt
-      FROM expenses e
-      JOIN members m ON m.id = e.paid_by_id
-      WHERE e.group_id = ?
-      ORDER BY e.id DESC
-    `),
-    insertExpense: db.prepare(`
-      INSERT INTO expenses (group_id, description, amount_cents, paid_by_id, split_type)
-      VALUES (?, ?, ?, ?, ?)
-    `),
-    insertSplit: db.prepare(`
-      INSERT INTO expense_splits (expense_id, member_id, amount_cents)
-      VALUES (?, ?, ?)
-    `),
-    listSplitsForExpense: db.prepare(`
-      SELECT
-        s.member_id AS memberId,
-        m.name AS memberName,
-        s.amount_cents AS amountCents
-      FROM expense_splits s
-      JOIN members m ON m.id = s.member_id
-      WHERE s.expense_id = ?
-      ORDER BY s.id
-    `),
-    deleteExpense: db.prepare(`DELETE FROM expenses WHERE id = ? AND group_id = ?`),
+    listGroups() {
+      return all(
+        db,
+        `
+        SELECT
+          g.id,
+          g.name,
+          g.created_at AS createdAt,
+          COUNT(DISTINCT m.id) AS memberCount,
+          COUNT(DISTINCT e.id) AS expenseCount
+        FROM groups g
+        LEFT JOIN members m ON m.group_id = g.id
+        LEFT JOIN expenses e ON e.group_id = g.id
+        GROUP BY g.id
+        ORDER BY g.created_at DESC
+      `,
+      );
+    },
+    getGroup(id) {
+      return get(db, `SELECT id, name, created_at AS createdAt FROM groups WHERE id = ?`, [id]);
+    },
+    insertGroup(name) {
+      return run(db, `INSERT INTO groups (name) VALUES (?)`, [name]);
+    },
+    insertMember(groupId, name) {
+      return run(db, `INSERT INTO members (group_id, name) VALUES (?, ?)`, [groupId, name]);
+    },
+    listMembers(groupId) {
+      return all(
+        db,
+        `
+        SELECT id, group_id AS groupId, name, created_at AS createdAt
+        FROM members
+        WHERE group_id = ?
+        ORDER BY id
+      `,
+        [groupId],
+      );
+    },
+    listExpenses(groupId) {
+      return all(
+        db,
+        `
+        SELECT
+          e.id,
+          e.group_id AS groupId,
+          e.description,
+          e.amount_cents AS amountCents,
+          e.paid_by_id AS paidById,
+          m.name AS paidByName,
+          e.split_type AS splitType,
+          e.created_at AS createdAt
+        FROM expenses e
+        JOIN members m ON m.id = e.paid_by_id
+        WHERE e.group_id = ?
+        ORDER BY e.id DESC
+      `,
+        [groupId],
+      );
+    },
+    insertExpense(groupId, description, amountCents, paidById, splitType) {
+      return run(
+        db,
+        `
+        INSERT INTO expenses (group_id, description, amount_cents, paid_by_id, split_type)
+        VALUES (?, ?, ?, ?, ?)
+      `,
+        [groupId, description, amountCents, paidById, splitType],
+      );
+    },
+    insertSplit(expenseId, memberId, amountCents) {
+      return run(
+        db,
+        `
+        INSERT INTO expense_splits (expense_id, member_id, amount_cents)
+        VALUES (?, ?, ?)
+      `,
+        [expenseId, memberId, amountCents],
+      );
+    },
+    listSplitsForExpense(expenseId) {
+      return all(
+        db,
+        `
+        SELECT
+          s.member_id AS memberId,
+          m.name AS memberName,
+          s.amount_cents AS amountCents
+        FROM expense_splits s
+        JOIN members m ON m.id = s.member_id
+        WHERE s.expense_id = ?
+        ORDER BY s.id
+      `,
+        [expenseId],
+      );
+    },
+    deleteExpense(expenseId, groupId) {
+      return run(db, `DELETE FROM expenses WHERE id = ? AND group_id = ?`, [expenseId, groupId]);
+    },
+    transaction(fn) {
+      db.exec("BEGIN");
+      try {
+        const result = fn();
+        db.exec("COMMIT");
+        return result;
+      } catch (err) {
+        db.exec("ROLLBACK");
+        throw err;
+      }
+    },
   };
 }

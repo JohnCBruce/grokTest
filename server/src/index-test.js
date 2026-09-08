@@ -8,13 +8,26 @@ import { createRouter } from "./routes.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 3001);
 
-const db = openDb();
-globalThis.__splitfairDb = db;
+let db;
+let queries;
+
+function ensureDb() {
+  if (!db) {
+    db = openDb();
+    queries = createQueries(db);
+  }
+  return queries;
+}
+
 const app = express();
 
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: "100kb" }));
-app.use("/api", createRouter(createQueries(db)));
+app.use((req, res, next) => {
+  ensureDb();
+  next();
+});
+app.use("/api", createRouter(() => ensureDb()));
 
 const clientDist = path.join(__dirname, "..", "..", "client", "dist");
 app.use(express.static(clientDist));

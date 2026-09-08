@@ -11,7 +11,7 @@ export function createRouter(queries) {
   });
 
   router.get("/groups", (_req, res) => {
-    res.json({ groups: queries.listGroups.all() });
+    res.json({ groups: queries.listGroups() });
   });
 
   router.post("/groups", (req, res) => {
@@ -21,12 +21,15 @@ export function createRouter(queries) {
       throw httpError(400, "Add at least two members");
     }
 
-    const result = queries.insertGroup.run(name);
-    const groupId = Number(result.lastInsertRowid);
-    for (const memberName of memberNames) {
-      queries.insertMember.run(groupId, memberName);
-    }
-    res.status(201).json(loadGroupPayload(queries, groupId));
+    const result = queries.transaction(() => {
+      const created = queries.insertGroup(name);
+      const groupId = Number(created.lastInsertRowid);
+      for (const memberName of memberNames) {
+        queries.insertMember(groupId, memberName);
+      }
+      return groupId;
+    });
+    res.status(201).json(loadGroupPayload(queries, result));
   });
 
   router.get("/groups/:id", (req, res) => {
@@ -47,18 +50,18 @@ export function createRouter(queries) {
   router.post("/groups/:id/members", (req, res) => {
     const group = requireGroupRecord(queries, req.params.id);
     const name = cleanName(req.body?.name, "Member name");
-    const existing = queries.listMembers.all(group.id);
+    const existing = queries.listMembers(group.id);
     if (existing.some((m) => m.name.toLowerCase() === name.toLowerCase())) {
       throw httpError(400, "That name is already in this group");
     }
-    queries.insertMember.run(group.id, name);
+    queries.insertMember(group.id, name);
     broadcast(group.id);
     res.status(201).json(loadGroupPayload(queries, group.id));
   });
 
   router.post("/groups/:id/expenses", (req, res) => {
     const group = requireGroupRecord(queries, req.params.id);
-    const members = queries.listMembers.all(group.id);
+    const members = queries.listMembers(group.id);
     const memberIds = new Set(members.map((m) => m.id));
 
     const description = cleanName(req.body?.description, "Description");
@@ -75,17 +78,19 @@ export function createRouter(queries) {
     const splitType = req.body?.splitType === "custom" ? "custom" : "equal";
     const splits = buildSplits({ splitType, amountCents, body: req.body, memberIds });
 
-    const expense = queries.insertExpense.run(
-      group.id,
-      description,
-      amountCents,
-      paidById,
-      splitType,
-    );
-    const expenseId = Number(expense.lastInsertRowid);
-    for (const split of splits) {
-      queries.insertSplit.run(expenseId, split.memberId, split.amountCents);
-    }
+    queries.transaction(() => {
+      const expense = queries.insertExpense(
+        group.id,
+        description,
+        amountCents,
+        paidById,
+        splitType,
+      );
+      const expenseId = Number(expense.lastInsertRowid);
+      for (const split of splits) {
+        queries.insertSplit(expenseId, split.memberId, split.amountCents);
+      }
+    });
 
     broadcast(group.id);
     res.status(201).json(loadGroupPayload(queries, group.id));
@@ -93,7 +98,7 @@ export function createRouter(queries) {
 
   router.delete("/groups/:id/expenses/:expenseId", (req, res) => {
     const group = requireGroupRecord(queries, req.params.id);
-    const result = queries.deleteExpense.run(Number(req.params.expenseId), group.id);
+    const result = queries.deleteExpense(Number(req.params.expenseId), group.id);
     if (result.changes === 0) {
       throw httpError(404, "Expense not found");
     }
@@ -152,17 +157,17 @@ function requireGroup(queries, id) {
 }
 
 function requireGroupRecord(queries, id) {
-  const group = queries.getGroup.get(Number(id));
+  const group = queries.getGroup(Number(id));
   if (!group) throw httpError(404, "Group not found");
   return group;
 }
 
 function loadGroupPayload(queries, groupId) {
-  const group = queries.getGroup.get(groupId);
-  const members = queries.listMembers.all(groupId);
-  const expenses = queries.listExpenses.all(groupId).map((expense) => ({
+  const group = queries.getGroup(groupId);
+  const members = queries.listMembers(groupId);
+  const expenses = queries.listExpenses(groupId).map((expense) => ({
     ...expense,
-    splits: queries.listSplitsForExpense.all(expense.id),
+    splits: queries.listSplitsForExpense(expense.id),
   }));
   const balances = balancesFromActivity(members, expenses);
   const settlements = simplifyDebts(balances);

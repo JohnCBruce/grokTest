@@ -72,6 +72,18 @@ describe("API", () => {
     assert.ok(net.every((cents) => cents === 0));
   });
 
+  it("keeps serving after many reads and writes", async () => {
+    for (let i = 0; i < 25; i += 1) {
+      const listed = await api("GET", "/api/groups");
+      assert.ok(Array.isArray(listed.groups));
+      const created = await api("POST", "/api/groups", {
+        name: `Loop ${i}`,
+        members: ["Ada", "Bea"],
+      });
+      assert.equal(created.members.length, 2);
+    }
+  });
+
   it("rejects custom splits that do not sum to the amount", async () => {
     const created = await api("POST", "/api/groups", {
       name: "Dinner",
